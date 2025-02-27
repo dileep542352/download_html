@@ -66,9 +66,8 @@ async def query_document_filter_func(_, __, query):
     msg = await __.get_messages(msg.chat.id, msg.message_id)
     if msg.document is not None:
         return True
-    elif msg.reply_to_message is not None:
-        if msg.reply_to_message.document is not None:
-            return True
+    elif msg.reply_to_message is not None and msg.reply_to_message.document is not None:
+        return True
     return False
 
 query_same_user = filters.create(query_same_user_filter_func)
@@ -219,7 +218,7 @@ async def choose_html_video_format(bot, query):
         return
 
     def_format = query.data
-    if message.document["mime_type"] != "text/html":
+    if message.document.mime_type != "text/html":
         return
     file = f"./downloads/{message.chat.id}/{message.document.file_unique_id}.html"
     await message.download(file)
@@ -247,7 +246,7 @@ async def download_html(bot, msg):
     else:
         return
 
-    if message.document["mime_type"] != "text/html":
+    if message.document.mime_type != "text/html":
         return
     file = f"./downloads/{message.chat.id}/{message.document.file_unique_id}.html"
     await message.download(file)
