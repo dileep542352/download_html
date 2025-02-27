@@ -5,13 +5,10 @@ import logging
 import time
 from functools import wraps
 from subprocess import getstatusoutput
-from get_video_info import get_video_attributes, get_video_thumb
 from dotenv import load_dotenv
 from pyrogram.errors import FloodWait
-from pyrogram.types.messages_and_media import message
-from pyrogram import Client
-from pyrogram import filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from bs4 import BeautifulSoup
 
 load_dotenv()
@@ -27,9 +24,9 @@ bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 with bot:
     BOT = bot.get_me().username.lower()
 
-auth_users = [ int(chat) for chat in os.environ.get("AUTH_USERS").split(",") if chat != '']
-sudo_groups = [ int(chat) for chat in os.environ.get("GROUPS").split(",")  if chat != '']
-sudo_html_groups = [ int(chat) for chat in os.environ.get("HTML_GROUPS").split(",")  if chat != '']
+auth_users = [int(chat) for chat in os.environ.get("AUTH_USERS").split(",") if chat != '']
+sudo_groups = [int(chat) for chat in os.environ.get("GROUPS").split(",") if chat != '']
+sudo_html_groups = [int(chat) for chat in os.environ.get("HTML_GROUPS").split(",") if chat != '']
 sudo_users = auth_users
 
 thumb = os.environ.get("THUMB")
@@ -38,35 +35,22 @@ if thumb.startswith("http://") or thumb.startswith("https://"):
     thumb = "thumb.jpg"
 
 logging.basicConfig(
-    # filename="bot.log",
     format="%(asctime)s:%(levelname)s %(message)s",
-    # filemode="w",
     level=logging.WARNING,
 )
 
 logger = logging.getLogger()
 
-
 def exception(logger):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-
             try:
                 return func(*args, **kwargs)
-            except:
-                issue = "Exception in " + func.__name__ + "\n"
-                issue = (
-                    issue
-                    + "-------------------------\
-                ------------------------------------------------\n"
-                )
-                logger.exception(issue)
-
+            except Exception as e:
+                logger.exception(f"Exception in {func.__name__}: {e}")
         return wrapper
-
     return decorator
-
 
 async def query_same_user_filter_func(_, __, query):
     message = query.message.reply_to_message
@@ -75,9 +59,7 @@ async def query_same_user_filter_func(_, __, query):
     if query.from_user.id != message.from_user.id:
         await query.answer("❌ Not for you", True)
         return False
-    else:
-        return True
-
+    return True
 
 async def query_document_filter_func(_, __, query):
     msg = query.message.reply_to_message
@@ -87,23 +69,16 @@ async def query_document_filter_func(_, __, query):
     elif msg.reply_to_message is not None:
         if msg.reply_to_message.document is not None:
             return True
-        else:
-            return False
-    else:
-        return False
-
+    return False
 
 query_same_user = filters.create(query_same_user_filter_func)
 query_document = filters.create(query_document_filter_func)
-
 
 @bot.on_message(filters.command("start"))
 async def start(bot, message):
     await message.reply("Send video link or html")
 
-
 class Timer:
-    # Time Interval Between Progress Updates Current is 10sec
     def __init__(self, time_between=10):
         self.start_time = time.time()
         self.time_between = time_between
@@ -114,18 +89,17 @@ class Timer:
             return True
         return False
 
-
 timer = Timer()
-
 
 async def send_video(message, path, caption, quote, filename):
     global thumb
-    async def progress_bar(current,total):
+    async def progress_bar(current, total):
         if timer.can_send():
             try:
                 await reply.edit(f"{current * 100 / total:.1f}%")
             except FloodWait as e:
                 time.sleep(e.x)
+
     reply = await message.reply("Uploading Video")
 
     try:
@@ -133,13 +107,13 @@ async def send_video(message, path, caption, quote, filename):
             thumb_to_send = get_video_thumb(path)
         else:
             thumb_to_send = thumb
-    except:
+    except Exception:
         logger.exception("Error generating thumbnail")
         thumb_to_send = "thumb.jpg"
 
     try:
         duration, width, height = get_video_attributes(path)
-    except:
+    except Exception:
         logger.exception("Error fetching attributes")
         duration = width = height = 0
 
@@ -153,114 +127,72 @@ async def send_video(message, path, caption, quote, filename):
         supports_streaming=True,
         progress=progress_bar,
         quote=quote,
-        # file_name=filename
     )
-    reply.delete()
-# def progress(current, total):  #To view Progress in Local or Logger
-#     print(f"{current * 100 / total:.1f}%")
-
-
+    await reply.delete()
 
 def parse_html(file, def_format):
     with open(file, "r") as f:
         source = f.read()
 
     soup = BeautifulSoup(source, "html.parser")
+    videos = []
 
     info = soup.select_one("p#info")
     mg_info = soup.select_one("p[style='text-align:center;font-size:30;color:Blue']")
     buttons_soup = soup.select("button.collapsible")
     paras_soup = soup.select("p")[2:]
+
     if info is not None:
         all_videos_soup = soup.select_one("div#videos")
         topics_soup = all_videos_soup.select("div.topic")
-        videos = []
         for topic_soup in topics_soup:
             topic_name = topic_soup.select_one("span.topic_name").get_text(strip=True)
             videos_soup = topic_soup.select("p.video")
             for video_soup in videos_soup:
-                video_name = video_soup.select_one("span.video_name").get_text(
-                    strip=True
-                )
+                video_name = video_soup.select_one("span.video_name").get_text(strip=True)
                 video_link = video_soup.select_one("a").get_text(strip=True)
-                if not (
-                    video_link.startswith("http://")
-                    or video_link.startswith("https://")
-                ):
-                    continue
-
-
-
-
-                videos.append((video_link, def_format, video_name, topic_name, False))
-    elif mg_info is not None and len(buttons_soup) != 0:
-        videos = []
-        for button_soup in buttons_soup:
-            topic_name = button_soup.get_text(strip=True).strip("Topic :- ")
-            para = button_soup.find_next_sibling("div", class_="content").p
-            # ps = [para.contents[i] for i in range(0,len(para)) if i%5==0 ]
-            for a_soup in para.select("a"):
-                br = a_soup.find_previous_sibling()
-                br.decompose()
-                video_name = a_soup.previousSibling
-                video_link = a_soup.get_text(strip=True)
-                if not (
-                    video_link.startswith("http://")
-                    or video_link.startswith("https://")
-                ):
-                    continue
-                videos.append((video_link, def_format, video_name, topic_name, False))
-    elif mg_info is not None and paras_soup[0].b is not None:
-        videos = []
-        for topic_para in paras_soup:
-            if paras_soup.index(topic_para) % 2 == 0:
-                topic_name = topic_para.get_text(strip=True).strip("Topic :- ")
-                para = topic_para.find_next_sibling("p")
+                if video_link.startswith("http://") or video_link.startswith("https://"):
+                    videos.append((video_link, def_format, video_name, topic_name, False))
+    elif mg_info is not None:
+        if len(buttons_soup) != 0:
+            for button_soup in buttons_soup:
+                topic_name = button_soup.get_text(strip=True).strip("Topic :- ")
+                para = button_soup.find_next_sibling("div", class_="content").p
                 for a_soup in para.select("a"):
                     br = a_soup.find_previous_sibling()
                     br.decompose()
                     video_name = a_soup.previousSibling
                     video_link = a_soup.get_text(strip=True)
-                    if not (
-                        video_link.startswith("http://")
-                        or video_link.startswith("https://")
-                    ):
-                        continue
-                    videos.append(
-                        (video_link, def_format, video_name, topic_name, False)
-                    )
-            else:
-                continue
-    elif (
-        mg_info is not None
-        and paras_soup[0].get("style") == "text-align:center;font-size:25px;"
-    ):
-        topic_name = ""
-        videos = []
-        for para in paras_soup:
-            video_name = para.contents[0]
-            video_link = para.select_one("a").get_text(strip=True)
-            if not (
-                video_link.startswith("http://")
-                or video_link.startswith("https://")
-            ):
-                continue
-            videos.append((video_link, def_format, video_name, topic_name, False))
-    else:
-        videos = []
-        topic_name = ""
-        video_name = ""
-        for a_soup in soup.select("a"):
-            video_link = a_soup.get("href")
-            if not (
-                video_link.startswith("http://")
-                or video_link.startswith("https://")
-            ):
-                continue
-            videos.append((video_link, def_format, video_name, topic_name, False))
+                    if video_link.startswith("http://") or video_link.startswith("https://"):
+                        videos.append((video_link, def_format, video_name, topic_name, False))
+        elif paras_soup[0].b is not None:
+            for topic_para in paras_soup:
+                if paras_soup.index(topic_para) % 2 == 0:
+                    topic_name = topic_para.get_text(strip=True).strip("Topic :- ")
+                    para = topic_para.find_next_sibling("p")
+                    for a_soup in para.select("a"):
+                        br = a_soup.find_previous_sibling()
+                        br.decompose()
+                        video_name = a_soup.previousSibling
+                        video_link = a_soup.get_text(strip=True)
+                        if video_link.startswith("http://") or video_link.startswith("https://"):
+                            videos.append((video_link, def_format, video_name, topic_name, False))
+        elif paras_soup[0].get("style") == "text-align:center;font-size:25px;":
+            topic_name = ""
+            for para in paras_soup:
+                video_name = para.contents[0]
+                video_link = para.select_one("a").get_text(strip=True)
+                if video_link.startswith("http://") or video_link.startswith("https://"):
+                    videos.append((video_link, def_format, video_name, topic_name, False))
+        else:
+            topic_name = ""
+            video_name = ""
+            for a_soup in soup.select("a"):
+                video_link = a_soup.get("href")
+                if video_link.startswith("http://") or video_link.startswith("https://"):
+                    videos.append((video_link, def_format, video_name, topic_name, False))
 
     return videos
-
 
 @bot.on_callback_query(query_document & query_same_user)
 async def choose_html_video_format(bot, query):
@@ -273,27 +205,19 @@ async def choose_html_video_format(bot, query):
         commands = msg.text.split()
     if len(commands) == 1:
         start_index = 1
-    elif len(commands) == 2:
-        if commands[1].isnumeric():
-            start_index = int(commands[1])
-        else:
-            return
-    elif len(commands) == 3 and commands[2] == "o":
-        if commands[1].isnumeric():
-            start_index = int(commands[1])
-            only = True
-        else:
-            return
+    elif len(commands) == 2 and commands[1].isnumeric():
+        start_index = int(commands[1])
+    elif len(commands) == 3 and commands[2] == "o" and commands[1].isnumeric():
+        start_index = int(commands[1])
+        only = True
     else:
         return
 
-    if msg.reply_to_message is not None:
-        if msg.reply_to_message.document is not None:
-            message = msg.reply_to_message
-        else:
-            return
+    if msg.reply_to_message is not None and msg.reply_to_message.document is not None:
+        message = msg.reply_to_message
     else:
-        message = msg
+        return
+
     def_format = query.data
     if message.document["mime_type"] != "text/html":
         return
@@ -304,11 +228,10 @@ async def choose_html_video_format(bot, query):
     if only:
         videos = [videos[start_index - 1]]
     else:
-        videos = videos[start_index - 1 :]
+        videos = videos[start_index - 1:]
     n = len(videos)
     await msg.reply(f"Downloading!!! {n} videos")
     await download_videos(msg, videos, start_index)
-
 
 @bot.on_message(
     (
@@ -319,13 +242,11 @@ async def choose_html_video_format(bot, query):
     & (filters.document | filters.reply)
 )
 async def download_html(bot, msg):
-    if msg.reply_to_message is not None:
-        if msg.reply_to_message.document is not None:
-            message = msg.reply_to_message
-        else:
-            return
+    if msg.reply_to_message is not None and msg.reply_to_message.document is not None:
+        message = msg.reply_to_message
     else:
-        message = msg
+        return
+
     if message.document["mime_type"] != "text/html":
         return
     file = f"./downloads/{message.chat.id}/{message.document.file_unique_id}.html"
@@ -346,14 +267,11 @@ async def download_html(bot, msg):
         title = message.document.file_name
 
     formats = ["144", "240", "360", "480", "720"]
-    buttons = []
-    for format in formats:
-        buttons.append(InlineKeyboardButton(text=format + "p", callback_data=format))
+    buttons = [InlineKeyboardButton(text=f"{fmt}p", callback_data=fmt) for fmt in formats]
     buttons_markup = InlineKeyboardMarkup([buttons])
 
     await msg.reply(title, quote=True, reply_markup=buttons_markup)
     os.remove(file)
-
 
 @bot.on_message(
     (
@@ -365,10 +283,10 @@ async def download_html(bot, msg):
 async def download_html_info(bot, message):
     await message.reply(
         "Send html with command as caption or reply.\n"
-        + "Specify start index separated by space and o if only that index\n"
-        + "e.g. /download_html\n"
-        + "e.g. /download_html 5\n"
-        + "e.g. /download_html 5 o\n"
+        "Specify start index separated by space and o if only that index\n"
+        "e.g. /download_html\n"
+        "e.g. /download_html 5\n"
+        "e.g. /download_html 5 o\n"
     )
 
 def is_vimeo(link):
@@ -382,7 +300,6 @@ def is_vimeo(link):
         vimeo_urls.append(match)
 
     return len(vimeo_urls) == 1
-
 
 def download_video(message, video):
     chat = message.chat.id
@@ -398,105 +315,38 @@ def download_video(message, video):
     elif "magnetoscript" in link and "jwp" in link:
         vid_id = link[-8:]
         link = f"https://thegreatace.herokuapp.com/{vid_id}"
-    elif "thegreatace" in link and (len(link.split("/")[-1])==11):
+    elif "thegreatace" in link and (len(link.split("/")[-1]) == 11):
         vid_id = link[-11:]
         link = f"http://youtu.be/{vid_id}"
     elif "jwplayer" in link and link.endswith('.m3u8'):
         vid_id = link.removesuffix(".m3u8").split("/")[-1]
         link = f"https://magnetoscript.gq/jwp{vid_id}"
-        
-        reply_markup = pyrogram.inlinekeyboardmarkup(inline_keyboard)
-        #LOGGER.info(reply_markup)
-        if cf_name:
-            succss_mesg = f"""Select the desired format | {cf_name}"""
-        else:
-            succss_mesg = f"""Select the desired format"""
-            LOGGER.info(succss_mesg)
-            return thumb_image, succss_mesg, reply_markup
     elif "jwplayer" in link and link.endswith('.mp4'):
         vid_id = link.removesuffix('.mp4').split('/')[-1].split('-')[0]
         link = f"https://magnetoscript.gq/jwp{vid_id}"
     elif "support.careerwill" in link and (len(link.split("/")[-1]) == 13):
         vid_id = link[-13:]
-        link = f"http:player.deshdeepak.me{vid_id}"    
+        link = f"http:player.deshdeepak.me{vid_id}"
 
     if not vid_format.isnumeric():
         title = vid_format
 
     if "youtu" in link:
-        if vid_format in ["144", "240", "480"]:
-            ytf = f"'bestvideo[height<={vid_format}][ext=mp4]+bestaudio[ext=m4a]'"
-        elif vid_format == "360":
-            ytf = 18
-        elif vid_format == "720":
-            ytf = 22
-        else:
-            ytf = 18
+        ytf = 18 if vid_format in ["360", "480"] else f"'bestvideo[height<={vid_format}][ext=mp4]+bestaudio[ext=m4a]'"
     elif ("deshdeepak" in link and len(link.split("/")[-1]) == 13):
         vid_id = link[-13:]
         link = f"https://thegreatace.herokuapp.com/{vid_id}"
-        if vid_format not in ["144", "240", "360", "480", "720"]:
-            vid_format = "360"
         ytf = f"'bestvideo[height<={vid_format}]+bestaudio'"
     elif ("deshdeepak" in link and len(link.split("/")[-1]) == 8):
-        if vid_format == "144":
-            vid_format = "180"
-        elif vid_format == "240":
-            vid_format = "270"
-        elif vid_format == "360":
-            vid_format = "360"
-        elif vid_format == "480":
-            vid_format = "540"
-        elif vid_format == "720":
-            vid_format = "720"
-        else:
-            vid_format = "360"
+        vid_format = "360" if vid_format not in ["144", "240", "360", "480", "720"] else vid_format
         ytf = f"'best[height<={vid_format}]'"
-    elif ("thegreatace" in link and len(link.split("/")[-1]) == 13):
-        vid_id = link[-13:]
-        if vid_format not in ["144", "240", "360", "480", "720"]:
-            vid_format = "360"
-        ytf = f"'bestvideo[height<={vid_format}]+bestaudio'"
-    elif ("thegreatace" in link and len(link.split("/")[-1]) == 8):    
-        if vid_format == "144":
-            vid_format = "180"
-        elif vid_format == "240":
-            vid_format = "270"
-        elif vid_format == "360":
-            vid_format = "360"
-        elif vid_format == "480":
-            vid_format = "540"
-        elif vid_format == "720":
-            vid_format = "720"
-        else:
-            vid_format = "360"
-        ytf = f"'best[height<={vid_format}]'"    
     elif is_vimeo(link):
-        if vid_format == "144":
-            ytf= "'http-240p'"
-        elif vid_format == "240":
-            ytf= "'http-240p'"
-        elif vid_format == "360":
-            ytf= "'http-360p'"
-        elif vid_format == "480":
-            ytf= "'http-540p'"
-        elif vid_format == "720":
-            ytf= "'http-720p'"
-        else:
-            ytf = "'http-360p'"
+        ytf = "'http-360p'" if vid_format == "360" else f"'http-{vid_format}p'"
     else:
         ytf = "'best'"
 
-    cmd = (
-        f"yt-dlp -o './downloads/{chat}/%(id)s.%(ext)s' -f {ytf} --no-warning '{link}'"
-    )
-    filename = (
-        title.replace("/", "|")
-        .replace("+", "_")
-        .replace("?", ":Q:")
-        .replace("*", ":S:")
-        .replace("#", ":H:")
-    )
+    cmd = f"yt-dlp -o './downloads/{chat}/%(id)s.%(ext)s' -f {ytf} --no-warning '{link}'"
+    filename = title.replace("/", "|").replace("+", "_").replace("?", ":Q:").replace("*", ":S:").replace("#", ":H:")
     filename_cmd = f"{cmd} -e --get-filename -R 25"
     st1, out1 = getstatusoutput(filename_cmd)
     if st1 != 0:
@@ -518,7 +368,6 @@ def download_video(message, video):
         caption = f"By: {NAME}\n\nTitle: {title}\n\nTopic: {topic}"
         return 0, path, caption, quote, filename
 
-
 @exception(logger)
 async def download_videos(message, videos, index=1):
     for video in videos:
@@ -528,7 +377,7 @@ async def download_videos(message, videos, index=1):
             try:
                 await message.reply(caption, quote=quote)
             except FloodWait as e:
-                time.sleep(e.x+1)
+                time.sleep(e.x + 1)
                 await message.reply(caption, quote=quote)
         elif r == 0:
             await send_video(message, path, caption, quote, filename)
@@ -537,21 +386,14 @@ async def download_videos(message, videos, index=1):
 
     await message.reply("Done.")
 
-
 def get_videos(req_videos, def_format):
     videos = []
     for video in req_videos:
         video_parts = video.split("|")
         video_link = video_parts[0]
-        video_format = (
-            video_parts[1]
-            if len(video_parts) == 2 and video_parts[1] != ""
-            else def_format
-        )
+        video_format = video_parts[1] if len(video_parts) == 2 and video_parts[1] != "" else def_format
         videos.append((video_link, video_format, "", "", True))
-
     return videos
-
 
 @bot.on_callback_query(~query_document & query_same_user)
 async def choose_video_format(bot, query):
@@ -563,7 +405,6 @@ async def choose_video_format(bot, query):
     n = len(videos)
     await message.reply(f"Downloading!!! {n} videos")
     await download_videos(message, videos)
-
 
 @bot.on_message(
     (
@@ -589,11 +430,7 @@ async def download_link(bot, message):
             await message.reply("Not authorized for this action.", quote=True)
             return
         formats = ["144", "240", "360", "480", "720"]
-        buttons = []
-        for def_format in formats:
-            buttons.append(
-                InlineKeyboardButton(text=def_format + "p", callback_data=def_format)
-            )
+        buttons = [InlineKeyboardButton(text=f"{fmt}p", callback_data=fmt) for fmt in formats]
         buttons_markup = InlineKeyboardMarkup([buttons])
         await message.reply("Choose Format", quote=True, reply_markup=buttons_markup)
     else:
@@ -606,6 +443,5 @@ async def download_link(bot, message):
         n = len(videos)
         await message.reply(f"Downloading!!! {n} videos")
         await download_videos(message, videos)
-
 
 bot.run()
